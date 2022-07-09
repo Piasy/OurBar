@@ -1,0 +1,60 @@
+plugins {
+  id 'org.jetbrains.kotlin.multiplatform'
+  id 'org.jetbrains.kotlin.plugin.serialization'
+  id 'com.android.library'
+}
+
+android {
+  compileSdkVersion androidCompileSdkVersion
+  defaultConfig {
+    minSdkVersion androidMinSdkVersion
+
+    sourceSets.main {
+      java.srcDirs = ['src/androidMain/java']
+      res.srcDirs = ['src/androidMain/res']
+      jniLibs.srcDirs = ['src/androidMain/jniLibs']
+      manifest.srcFile 'src/androidMain/AndroidManifest.xml'
+    }
+  }
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_1_8
+    targetCompatibility JavaVersion.VERSION_1_8
+  }
+  buildTypes {
+    release {
+      minifyEnabled false
+      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
+    }
+  }
+}
+
+kotlin {
+  android("android")
+
+  sourceSets {
+    commonMain {
+      dependencies {
+        implementation 'org.jetbrains.kotlin:kotlin-stdlib-common'
+        implementation "org.jetbrains.kotlinx:kotlinx-serialization-json:${kotlinx_serialization_version}"
+      }
+    }
+
+    androidMain {
+      dependencies {
+        implementation 'org.jetbrains.kotlin:kotlin-stdlib-jdk8'
+
+        implementation 'androidx.annotation:annotation:1.3.0'
+      }
+    }
+  }
+}
+
+tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).all {
+  kotlinOptions {
+    jvmTarget = "1.8"
+  }
+}
+
+configurations {
+  compile.exclude group: 'org.json', module: 'json'
+}
