@@ -1,0 +1,3 @@
+[submodule "simple-torrent-android"]
+	path = simple-torrent-android
+	url = git@github.com:Piasy/simple-torrent-android.git
