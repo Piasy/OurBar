@@ -22,3 +22,6 @@ pluginManagement {
 rootProject.name = "OurBar"
 include ':OurBar'
 include ':androidApp'
+
+include 'bt-android'
+project(':bt-android').projectDir = new File('simple-torrent-android/simpletorrentandroid')
