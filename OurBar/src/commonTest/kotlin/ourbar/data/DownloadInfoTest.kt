@@ -1,6 +1,5 @@
-package ourbar.data
+package com.piasy.ourbar.data
 
-import com.piasy.ourbar.data.DownloadInfo
 import kotlin.test.Test
 import kotlin.test.assertEquals
 

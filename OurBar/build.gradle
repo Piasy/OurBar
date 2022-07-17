@@ -36,6 +36,8 @@ kotlin {
       dependencies {
         implementation 'org.jetbrains.kotlin:kotlin-stdlib-common'
         implementation "org.jetbrains.kotlinx:kotlinx-serialization-json:${kotlinx_serialization_version}"
+
+        implementation('com.squareup.okhttp3:logging-interceptor:4.10.0')
       }
     }
 

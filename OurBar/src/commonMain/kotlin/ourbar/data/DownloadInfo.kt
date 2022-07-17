@@ -10,9 +10,14 @@ data class DownloadInfo(
   val hash: String,
   val torrent: String,
   val magnet: String,
+  val filmInfo: FilmInfo,
 ) {
   fun onTorrentSaved(torrent: String): DownloadInfo {
-    return DownloadInfo(hash, torrent, magnet)
+    return DownloadInfo(hash, torrent, magnet, filmInfo)
+  }
+
+  fun setInfo(filmInfo: FilmInfo): DownloadInfo {
+    return DownloadInfo(hash, torrent, magnet, filmInfo)
   }
 
   companion object {
@@ -24,7 +29,7 @@ data class DownloadInfo(
         if (parts2.size > 1) {
           val parts3 = parts2[0].split(":")
           if (parts3.size == 3 && parts3[0] == "urn") {
-            return DownloadInfo(parts3[2], "", magnet)
+            return DownloadInfo(parts3[2], "", magnet, FilmInfo("", "", "", "", ""))
           }
         }
       }

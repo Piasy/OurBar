@@ -4,25 +4,37 @@ import com.piasy.kmpp.BtDownloader
 import com.piasy.kmpp.BtDownloaderFactory
 import com.piasy.kmpp.DownloadListener
 import com.piasy.kmpp.DownloadStatus
+import com.piasy.kmpp.HttpFactory
 import com.piasy.kmpp.KVStorageFactory
 import com.piasy.kmpp.Logging
-import com.piasy.kmpp.WorkerTaskQueueFactory
 import com.piasy.ourbar.data.DownloadInfo
 import kotlinx.serialization.json.Json
 
 /**
  * Created by Piasy{github.com/Piasy} on 2022/7/13.
  */
-class DownloadManager(context: Any, defaultDir: String) : DownloadListener {
-  private val queue = WorkerTaskQueueFactory.createQueue(true)
+interface DownloadManagerListener {
+  fun onDownloadStatus(status: HashMap<String, DownloadStatus>)
+}
+
+class DownloadManager(
+  context: Any,
+  defaultDir: String,
+  private val listener: DownloadManagerListener
+) :
+  DownloadListener {
+  private val queue = OurBarWorkerTaskQueue()
   private val storage = KVStorageFactory.createKVStorage(context)
   private val json = Json {
     encodeDefaults = false
     ignoreUnknownKeys = true
   }
   private val downloader: BtDownloader
+  private val filmInfoFetcher = FilmInfoFetcher(HttpFactory.createHttp(8000))
 
   init {
+    queue.updateDownloadState(DownloadState.initState())
+
     val dir = storage.get(KEY_DOWNLOAD_DIR)
     Logging.info(TAG, "init with dir: $dir")
     downloader = BtDownloaderFactory.createDownloader(context, dir ?: defaultDir, this)
@@ -66,19 +78,34 @@ class DownloadManager(context: Any, defaultDir: String) : DownloadListener {
 
       val downloads = storage.get(KEY_DOWNLOADS)
       if (downloads == null) {
-        doAdd(info, downloads)
+        doAdd(info, detail, downloads)
       } else {
         val set = HashSet(downloads.split(","))
         if (!set.contains(info.hash)) {
-          doAdd(info, downloads)
+          doAdd(info, detail, downloads)
         } else {
-          Logging.info(TAG, "add existed ${storage.get(info.hash)}, magnet $magnet")
+          val info2Str = storage.get(info.hash)
+          Logging.info(TAG, "add existed $info2Str, magnet $magnet")
+          if (info2Str == null) {
+            return@execute
+          }
+          val info2 = json.decodeFromString(DownloadInfo.serializer(), info2Str)
+          if (info2.filmInfo.name == "") {
+            Logging.info(TAG, "retry get film info")
+            storage.set(
+              info.hash,
+              json.encodeToString(
+                DownloadInfo.serializer(),
+                info2.setInfo(filmInfoFetcher.fetch(detail))
+              )
+            )
+          }
         }
       }
     }
   }
 
-  private fun doAdd(info: DownloadInfo, downloads: String?) {
+  private fun doAdd(info: DownloadInfo, detail: String, downloads: String?) {
     if (downloads == null) {
       storage.set(KEY_DOWNLOADS, info.hash)
     } else {
@@ -87,7 +114,10 @@ class DownloadManager(context: Any, defaultDir: String) : DownloadListener {
       storage.set(KEY_DOWNLOADS, set.joinToString(","))
     }
 
-    storage.set(info.hash, json.encodeToString(DownloadInfo.serializer(), info))
+    storage.set(
+      info.hash,
+      json.encodeToString(DownloadInfo.serializer(), info.setInfo(filmInfoFetcher.fetch(detail)))
+    )
 
     downloader.downloadMagnet(info.magnet)
   }
@@ -95,7 +125,6 @@ class DownloadManager(context: Any, defaultDir: String) : DownloadListener {
   fun remove(hash: String) {
     queue.execute {
       Logging.info(TAG, "remove $hash")
-
     }
   }
 
@@ -116,9 +145,9 @@ class DownloadManager(context: Any, defaultDir: String) : DownloadListener {
   }
 
   override fun onDownloadStatus(hash: String, status: DownloadStatus) {
-    Logging.info(TAG, "onDownloadStatus $hash, $status")
     queue.execute {
-
+      val state = queue.updateDownloadState(queue.downloadState().updateStatus(hash, status))
+      listener.onDownloadStatus(state.status)
     }
   }
 
