@@ -4,10 +4,14 @@ import com.piasy.kmpp.BtDownloader
 import com.piasy.kmpp.BtDownloaderFactory
 import com.piasy.kmpp.DownloadListener
 import com.piasy.kmpp.DownloadStatus
-import com.piasy.kmpp.HttpFactory
 import com.piasy.kmpp.KVStorageFactory
 import com.piasy.kmpp.Logging
 import com.piasy.ourbar.data.DownloadInfo
+import io.ktor.client.engine.HttpClientEngineConfig
+import io.ktor.client.engine.HttpClientEngineFactory
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 
 /**
@@ -17,24 +21,25 @@ interface DownloadManagerListener {
   fun onDownloadStatus(status: HashMap<String, DownloadStatus>)
 }
 
-class DownloadManager(
+class DownloadManager constructor(
   context: Any,
   defaultDir: String,
-  private val listener: DownloadManagerListener
-) :
-  DownloadListener {
-  private val queue = OurBarWorkerTaskQueue()
+  private val scope: CoroutineScope,
+  http: HttpClientEngineFactory<HttpClientEngineConfig>,
+  private val listener: DownloadManagerListener,
+  private val getStatus: Boolean = true,
+) : DownloadListener {
   private val storage = KVStorageFactory.createKVStorage(context)
   private val json = Json {
     encodeDefaults = false
     ignoreUnknownKeys = true
   }
   private val downloader: BtDownloader
-  private val filmInfoFetcher = FilmInfoFetcher(HttpFactory.createHttp(8000))
+  private val filmInfoFetcher = FilmInfoFetcher(http)
+
+  private val status = HashMap<String, DownloadStatus>()
 
   init {
-    queue.updateDownloadState(DownloadState.initState())
-
     val dir = storage.get(KEY_DOWNLOAD_DIR)
     Logging.info(TAG, "init with dir: $dir")
     downloader = BtDownloaderFactory.createDownloader(context, dir ?: defaultDir, this)
@@ -43,7 +48,7 @@ class DownloadManager(
   }
 
   fun changeDownloadDir(dir: String) {
-    queue.execute {
+    scope.launch {
       Logging.info(TAG, "changeDownloadDir $dir")
       storage.set(KEY_DOWNLOAD_DIR, dir)
       downloader.changeDownloadDir(dir)
@@ -51,7 +56,7 @@ class DownloadManager(
   }
 
   private fun start() {
-    queue.execute {
+    scope.launch {
       Logging.info(TAG, "start")
       val downloads = storage.get(KEY_DOWNLOADS)
       Logging.info(TAG, "previous downloads: $downloads")
@@ -67,14 +72,16 @@ class DownloadManager(
         }
       }
 
-      getDownloadStatus()
+      if (getStatus) {
+        getDownloadStatus()
+      }
     }
   }
 
   fun add(magnet: String, detail: String) {
-    queue.execute {
+    scope.launch {
       Logging.info(TAG, "add $magnet, $detail")
-      val info = DownloadInfo.create(magnet) ?: return@execute
+      val info = DownloadInfo.create(magnet) ?: return@launch
 
       val downloads = storage.get(KEY_DOWNLOADS)
       if (downloads == null) {
@@ -86,26 +93,33 @@ class DownloadManager(
         } else {
           val info2Str = storage.get(info.hash)
           Logging.info(TAG, "add existed $info2Str, magnet $magnet")
-          if (info2Str == null) {
-            return@execute
+
+          val hasInfo = if (info2Str == null) {
+            false
+          } else {
+            val info2 = json.decodeFromString(DownloadInfo.serializer(), info2Str)
+            info2.filmInfo.name != ""
           }
-          val info2 = json.decodeFromString(DownloadInfo.serializer(), info2Str)
-          if (info2.filmInfo.name == "") {
-            Logging.info(TAG, "retry get film info")
-            storage.set(
-              info.hash,
-              json.encodeToString(
-                DownloadInfo.serializer(),
-                info2.setInfo(filmInfoFetcher.fetch(detail))
-              )
-            )
+          if (hasInfo) {
+            return@launch
           }
+          Logging.info(TAG, "retry get film info")
+
+          val info3 = filmInfoFetcher.fetch(detail)
+          // when we get info3, the download may be removed, check it
+          if (!hasDownload(info.hash)) {
+            return@launch
+          }
+          storage.set(
+            info.hash,
+            json.encodeToString(DownloadInfo.serializer(), info.setInfo(info3))
+          )
         }
       }
     }
   }
 
-  private fun doAdd(info: DownloadInfo, detail: String, downloads: String?) {
+  private suspend fun doAdd(info: DownloadInfo, detail: String, downloads: String?) {
     if (downloads == null) {
       storage.set(KEY_DOWNLOADS, info.hash)
     } else {
@@ -114,47 +128,58 @@ class DownloadManager(
       storage.set(KEY_DOWNLOADS, set.joinToString(","))
     }
 
+    val filmInfo = filmInfoFetcher.fetch(detail)
+    println("XXPXX doAdd filmInfo $filmInfo")
+    // when we get filmInfo, the download may be removed, check it
+    if (!hasDownload(info.hash)) {
+      return
+    }
     storage.set(
       info.hash,
-      json.encodeToString(DownloadInfo.serializer(), info.setInfo(filmInfoFetcher.fetch(detail)))
+      json.encodeToString(DownloadInfo.serializer(), info.setInfo(filmInfo))
     )
 
     downloader.downloadMagnet(info.magnet)
   }
 
+  private fun hasDownload(hash: String): Boolean {
+    val downloads = storage.get(KEY_DOWNLOADS) ?: return false
+    return HashSet(downloads.split(",")).contains(hash)
+  }
+
   fun remove(hash: String) {
-    queue.execute {
+    scope.launch {
       Logging.info(TAG, "remove $hash")
     }
   }
 
   fun stop() {
-    queue.execute {
+    scope.launch {
       Logging.info(TAG, "stop")
       downloader.stop()
-      queue.shutdown()
     }
   }
 
   private fun getDownloadStatus() {
     downloader.postStatus()
 
-    queue.executeAfter(GET_STATUS_INTERVAL_MS) {
+    scope.launch {
+      delay(GET_STATUS_INTERVAL_MS)
       getDownloadStatus()
     }
   }
 
-  override fun onDownloadStatus(hash: String, status: DownloadStatus) {
-    queue.execute {
-      val state = queue.updateDownloadState(queue.downloadState().updateStatus(hash, status))
-      listener.onDownloadStatus(state.status)
+  override fun onDownloadStatus(hash: String, downloadStatus: DownloadStatus) {
+    scope.launch {
+      status[hash] = downloadStatus
+      listener.onDownloadStatus(status)
     }
   }
 
   override fun onTorrentSaved(hash: String, torrent: String) {
-    queue.execute {
+    scope.launch {
       Logging.info(TAG, "onTorrentSaved $hash, $torrent")
-      val infoStr = storage.get(hash) ?: return@execute
+      val infoStr = storage.get(hash) ?: return@launch
       val info = json.decodeFromString(DownloadInfo.serializer(), infoStr)
       val updatedInfo = json.encodeToString(DownloadInfo.serializer(), info.onTorrentSaved(torrent))
       storage.set(hash, updatedInfo)

@@ -1,9 +1,19 @@
 package com.piasy.ourbar
 
+import com.piasy.kmpp.LoggingImpl
+import io.mockk.every
+import io.mockk.mockkStatic
+
 /**
  * Created by Piasy{github.com/Piasy} on 2022/7/17.
  */
-internal val TEST_HTML = "\n" +
+fun mockLogging() {
+  mockkStatic(LoggingImpl::class)
+  every { LoggingImpl.info(any(), any()) } returns Unit
+  every { LoggingImpl.error(any(), any()) } returns Unit
+}
+
+const val TEST_HTML = "\n" +
     "    <div class=\"top250\"><span class=\"top250-no\">No.248</span><span class=\"top250-link\"><a href=\"https://movie.douban.com/top250\" target=\"_blank\">豆瓣电影Top250</a></span>\n" +
     "    </div>\n" +
     "\n" +

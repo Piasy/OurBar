@@ -2,26 +2,26 @@ package com.piasy.ourbar
 
 import com.piasy.kmpp.BtDownloader
 import com.piasy.kmpp.BtDownloaderFactory
-import com.piasy.kmpp.Http
-import com.piasy.kmpp.HttpFactory
 import com.piasy.kmpp.KVStorage
-import com.piasy.kmpp.KVStorageFactory
-import com.piasy.kmpp.LoggingImpl
-import com.piasy.kmpp.WorkerTaskQueue
-import com.piasy.kmpp.WorkerTaskQueueFactory
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
-import io.mockk.mockkStatic
 import io.mockk.verify
 import io.mockk.verifySequence
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 
 /**
  * Created by Piasy{github.com/Piasy} on 2022/7/13.
  */
-internal class DownloadManagerTest {
+@OptIn(ExperimentalCoroutinesApi::class)
+class DownloadManagerTest {
 
   private val detail = "https://movie.douban.com/subject/25921812/"
   private val hash = "f2266c7f3a32480613a6de403280497fe8e50f7c"
@@ -30,43 +30,7 @@ internal class DownloadManagerTest {
 
   @BeforeTest
   fun setup() {
-    mockkStatic(LoggingImpl::class)
-    every { LoggingImpl.info(any(), any()) } returns Unit
-    every { LoggingImpl.error(any(), any()) } returns Unit
-
-    val queue = object : WorkerTaskQueue<HashMap<String, Any>> {
-      private var state = HashMap<String, Any>()
-
-      override fun state(): HashMap<String, Any> {
-        return state
-      }
-
-      override fun updateState(newState: HashMap<String, Any>): HashMap<String, Any> {
-        state = newState
-        return state
-      }
-
-      override fun execute(task: () -> Unit) {
-        task()
-      }
-
-      override fun executeAfter(millis: Long, task: () -> Unit) {
-      }
-
-      override fun shutdown() {
-      }
-    }
-
-    mockkObject(WorkerTaskQueueFactory)
-    every { WorkerTaskQueueFactory.createQueue<HashMap<String, Any>>(any()) } returns queue
-  }
-
-  private fun mockHttp(): Http {
-    val http = mockk<Http>()
-    every { http.get(any()) } returns TEST_HTML
-    mockkObject(HttpFactory)
-    every { HttpFactory.createHttp(any()) } returns http
-    return http
+    mockLogging()
   }
 
   private fun mockDownloader(): BtDownloader {
@@ -87,37 +51,23 @@ internal class DownloadManagerTest {
     torrent: String? = null,
     info: String? = null,
   ): KVStorage {
-    val storage = mockk<KVStorage>()
-    every { storage.get(DownloadManager.KEY_DOWNLOAD_DIR) } returns null
-    every { storage.get(DownloadManager.KEY_DOWNLOADS) } returns downloads
-    every { storage.set(any(), any()) } returns Unit
-
-    if (hash != null) {
-      val mockInfo = info ?: if (torrent != null) {
-        "{\"hash\":\"$hash\",\"torrent\":\"$torrent\",\"magnet\":\"$magnet\",\"filmInfo\":{\"name\":\"name value\",\"year\":\"year value\",\"mainPic\":\"mainPic value\",\"duration\":\"duration value\",\"rating\":\"rating value\"}}"
-      } else {
-        null
-      }
-
-      if (mockInfo != null) {
-        every { storage.get(hash) } returns mockInfo
-      }
-    }
-
-    mockkObject(KVStorageFactory)
-    every { KVStorageFactory.createKVStorage(any()) } returns storage
-
-    return storage
+    return MockStorage(downloads, hash, torrent, magnet, info).storage
   }
 
   @Test
-  fun addFromScratch() {
+  fun addFromScratch() = runTest {
+    val dispatcher = StandardTestDispatcher(testScheduler)
+
     val downloader = mockDownloader()
     val storage = mockStorage()
-    val http = mockHttp()
+    val http = MockHttp(TEST_HTML, dispatcher)
+    val listener = mockk<DownloadManagerListener>()
 
-    val downloadManager = DownloadManager(true, "/tmp", mockk())
+    val downloadManager = DownloadManager(
+      true, "/tmp", CoroutineScope(dispatcher), http.http, listener, false
+    )
     downloadManager.add(magnet, detail)
+    advanceUntilIdle()
 
     verifySequence {
       // init
@@ -128,22 +78,30 @@ internal class DownloadManagerTest {
       // add
       storage.get(DownloadManager.KEY_DOWNLOADS)
       storage.set(DownloadManager.KEY_DOWNLOADS, hash)
+      storage.get(DownloadManager.KEY_DOWNLOADS) // check downloads after fetch
       storage.set(hash, any())
     }
 
-    verify(exactly = 1) { http.get(detail) }
-    verify { downloader.postStatus() }
+    assertEquals(1, http.requests.size)
+    assertEquals(detail, http.requests[0])
+
     verify(exactly = 1) { downloader.downloadMagnet(magnet) }
   }
 
   @Test
-  fun addExistingMagnet() {
+  fun addExistingMagnet() = runTest {
+    val dispatcher = StandardTestDispatcher(testScheduler)
+
     val downloader = mockDownloader()
     val storage = mockStorage(hash, hash, "")
-    val http = mockHttp()
+    val http = MockHttp(TEST_HTML, dispatcher)
+    val listener = mockk<DownloadManagerListener>()
 
-    val downloadManager = DownloadManager(true, "/tmp", mockk())
+    val downloadManager = DownloadManager(
+      true, "/tmp", CoroutineScope(dispatcher), http.http, listener, false
+    )
     downloadManager.add(magnet, detail)
+    advanceUntilIdle()
 
     verifySequence {
       // init
@@ -157,21 +115,27 @@ internal class DownloadManagerTest {
       storage.get(hash)
     }
 
-    verify(exactly = 0) { http.get(detail) }
-    verify { downloader.postStatus() }
+    assertEquals(0, http.requests.size)
+
     verify(exactly = 1) { downloader.downloadMagnet(magnet) }
   }
 
   @Test
-  fun addExistingTorrent() {
+  fun addExistingTorrent() = runTest {
+    val dispatcher = StandardTestDispatcher(testScheduler)
+
     val downloader = mockDownloader()
-    val http = mockHttp()
+    val http = MockHttp(TEST_HTML, dispatcher)
 
     val torrent = "/storage/emulated/0/Download/f2266c7f3a32480613a6de403280497fe8e50f7c.torrent"
     val storage = mockStorage(hash, hash, torrent)
+    val listener = mockk<DownloadManagerListener>()
 
-    val downloadManager = DownloadManager(true, "/tmp", mockk())
+    val downloadManager = DownloadManager(
+      true, "/tmp", CoroutineScope(dispatcher), http.http, listener, false
+    )
     downloadManager.add(magnet, detail)
+    advanceUntilIdle()
 
     verifySequence {
       // init
@@ -185,19 +149,30 @@ internal class DownloadManagerTest {
       storage.get(hash)
     }
 
-    verify(exactly = 0) { http.get(detail) }
-    verify { downloader.postStatus() }
+    assertEquals(0, http.requests.size)
+
     verify(exactly = 1) { downloader.downloadTorrent(torrent) }
   }
 
   @Test
-  fun addRetryGetInfo() {
-    val downloader = mockDownloader()
-    val http = mockHttp()
-    val storage = mockStorage(hash, hash, "", "{\"hash\":\"$hash\",\"torrent\":\"\",\"magnet\":\"$magnet\",\"filmInfo\":{\"name\":\"\",\"year\":\"\",\"mainPic\":\"\",\"duration\":\"\",\"rating\":\"\"}}")
+  fun addRetryGetInfo() = runTest {
+    val dispatcher = StandardTestDispatcher(testScheduler)
 
-    val downloadManager = DownloadManager(true, "/tmp", mockk())
+    val downloader = mockDownloader()
+    val http = MockHttp(TEST_HTML, dispatcher)
+    val storage = mockStorage(
+      hash,
+      hash,
+      "",
+      "{\"hash\":\"$hash\",\"torrent\":\"\",\"magnet\":\"$magnet\",\"filmInfo\":{\"name\":\"\",\"year\":\"\",\"mainPic\":\"\",\"duration\":\"\",\"rating\":\"\"}}"
+    )
+    val listener = mockk<DownloadManagerListener>()
+
+    val downloadManager = DownloadManager(
+      true, "/tmp", CoroutineScope(dispatcher), http.http, listener, false
+    )
     downloadManager.add(magnet, detail)
+    advanceUntilIdle()
 
     verifySequence {
       // init
@@ -209,11 +184,13 @@ internal class DownloadManagerTest {
       // add
       storage.get(DownloadManager.KEY_DOWNLOADS)
       storage.get(hash)
+      storage.get(DownloadManager.KEY_DOWNLOADS) // check downloads after fetch
       storage.set(hash, any())
     }
 
-    verify(exactly = 1) { http.get(detail) }
-    verify { downloader.postStatus() }
+    assertEquals(1, http.requests.size)
+    assertEquals(detail, http.requests[0])
+
     verify(exactly = 1) { downloader.downloadMagnet(magnet) }
   }
 }

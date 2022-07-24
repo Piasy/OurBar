@@ -9,6 +9,10 @@ import com.piasy.kmpp.Logging
 import com.piasy.kmpp.initializeMarsXLog
 import com.piasy.ourbar.DownloadManager
 import com.piasy.ourbar.DownloadManagerListener
+import io.ktor.client.engine.okhttp.OkHttp
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.newSingleThreadContext
 import permissions.dispatcher.NeedsPermission
 import permissions.dispatcher.RuntimePermissions
 
@@ -31,6 +35,7 @@ class MainActivity : AppCompatActivity(), DownloadManagerListener {
     onRequestPermissionsResult(requestCode, grantResults)
   }
 
+  @OptIn(DelicateCoroutinesApi::class)
   @NeedsPermission(
     permission.WRITE_EXTERNAL_STORAGE,
   )
@@ -42,9 +47,16 @@ class MainActivity : AppCompatActivity(), DownloadManagerListener {
       true
     )
 
+//    Thread {
+//      val fetcher = FilmInfoFetcher()
+//      println(fetcher.fetch("https://movie.douban.com/subject/25921812/"))
+//    }.start()
+
     val downloadManager = DownloadManager(
       applicationContext,
       Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).absolutePath,
+      CoroutineScope(newSingleThreadContext("OBWorker")),
+      OkHttp,
       this
     )
 

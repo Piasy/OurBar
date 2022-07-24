@@ -9,4 +9,7 @@
 .externalNativeBuild
 .cxx
 local.properties
+
 Pods
+xcuserdata
+OurBar/OurBar.podspec

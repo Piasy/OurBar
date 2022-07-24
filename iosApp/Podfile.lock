@@ -1,0 +1,16 @@
+PODS:
+  - OurBar (1.0)
+
+DEPENDENCIES:
+  - OurBar (from `../OurBar`)
+
+EXTERNAL SOURCES:
+  OurBar:
+    :path: "../OurBar"
+
+SPEC CHECKSUMS:
+  OurBar: 57c77f46b4269649f88b0391362e23c4f40a5c19
+
+PODFILE CHECKSUM: 841c05aef6eb22f8492a47c684b67087fee17f13
+
+COCOAPODS: 1.11.3
