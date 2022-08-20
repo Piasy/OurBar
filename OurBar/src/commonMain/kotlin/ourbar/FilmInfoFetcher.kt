@@ -39,9 +39,16 @@ class FilmInfoFetcher(
     }
     val html = response.getOrDefault("")
 
-    val regex =
-      """(^.*v:itemreviewed">)(.*?)(<.*year">\()(.*?)(\).*?mainpic.*?src=")(.*?)(".*v:runtime.*?>)(.*?)(</span>)(.*?)(<br/>.*v:average">)(.*?)(<.*$)""".toRegex()
-    val res = regex.find(html)
+    // workaround for https://youtrack.jetbrains.com/issue/KT-53352
+    // val regex =
+    //   """(^.*v:itemreviewed">)(.*?)(<.*year">\()(.*?)(\).*?mainpic.*?src=")(.*?)(".*v:runtime.*?>)(.*?)(</span>)(.*?)(<br/>.*v:average">)(.*?)(<.*$)""".toRegex()
+
+    val regex1 =
+      """(.*v:itemreviewed">)(.*?)(<.*year">\()(.*?)(\))""".toRegex()
+    val res1 = regex1.find(html)
+    val regex2 =
+      """(.*mainpic.*?src=")(.*?)(".*v:runtime.*?>)(.*?)(</span>)(.*?)(<br/>.*v:average">)(.*?)(<.*)""".toRegex()
+    val res2 = regex2.find(html)
 
     var name = ""
     var year = ""
@@ -49,12 +56,12 @@ class FilmInfoFetcher(
     var duration = ""
     var rating = ""
 
-    if (res != null && res.groups.size == 14) {
-      name = res.groups[2]?.value ?: ""
-      year = res.groups[4]?.value ?: ""
-      mainPic = res.groups[6]?.value ?: ""
-      duration = (res.groups[8]?.value ?: "") + (res.groups[10]?.value ?: "")
-      rating = res.groups[12]?.value ?: ""
+    if (res1 != null && res2 != null && res1.groups.size == 6 && res2.groups.size == 10) {
+      name = res1.groups[2]?.value ?: ""
+      year = res1.groups[4]?.value ?: ""
+      mainPic = res2.groups[2]?.value ?: ""
+      duration = (res2.groups[4]?.value ?: "") + (res2.groups[6]?.value ?: "")
+      rating = res2.groups[8]?.value ?: ""
     }
 
     return FilmInfo(name, year, mainPic, duration, rating)
